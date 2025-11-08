@@ -2,9 +2,10 @@ require("dotenv").config();
 const express = require("express");
 const { HoldingsModel } = require("./model/HoldingsModel");
 const { PositionsModel } = require("./model/PositionsModel");
+const { UserModel } = require("./model/UserModel");
+const { authenticateToken } = require("./middleware/auth");
 const mongoose = require("mongoose");
-
-
+const jwt = require("jsonwebtoken");
 
 const app = express();
 const cors = require("cors");
@@ -59,18 +60,164 @@ const {OrdersModel} =require("./model/OrdersModel");
 //   res.send("Positions added successfully");
 // });
 
-app.post("/newOrder",(req,res)=>{
-  let newOrder = new OrdersModel({
-    name:req.body.name,
-    qty:req.body.qty,
-    price:req.body.price,
-    mode:req.body.mode,
-  });
-  newOrder.save();
-  res.send("Order Placed");
+// Authentication Routes
+app.post("/api/signup", async (req, res) => {
+  try {
+    const { name, email, mobile, pan, password } = req.body;
 
+    // Check if user already exists
+    const existingUser = await UserModel.findOne({
+      $or: [
+        { email: email.toLowerCase() },
+        { mobile },
+        { pan: pan.toUpperCase() }
+      ]
+    });
+
+    if (existingUser) {
+      let field = existingUser.email === email.toLowerCase() ? 'email' :
+                 existingUser.mobile === mobile ? 'mobile' : 'PAN';
+      return res.status(400).json({ 
+        message: `User with this ${field} already exists.` 
+      });
+    }
+
+    // Create new user
+    const user = new UserModel({
+      name,
+      email,
+      mobile,
+      pan,
+      password
+    });
+
+    await user.save();
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.status(201).json({
+      message: "User created successfully",
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email
+      }
+    });
+
+  } catch (error) {
+    console.error('Signup error:', error);
+    res.status(500).json({ message: "Error creating user" });
+  }
 });
 
+app.post("/api/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Find user by email
+    const user = await UserModel.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res.status(400).json({ message: "User not found" });
+    }
+
+    // Check password
+    const validPassword = await user.comparePassword(password);
+    if (!validPassword) {
+      return res.status(400).json({ message: "Invalid password" });
+    }
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      message: "Logged in successfully",
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email
+      }
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ message: "Error logging in" });
+  }
+});
+
+// Protected Routes - example
+// Create order and update holdings accordingly
+app.post("/newOrder", async (req, res) => {
+  try {
+    const { name, qty, price, mode } = req.body;
+
+    // Save order record
+    const newOrder = new OrdersModel({
+      name,
+      qty,
+      price,
+      mode,
+    });
+    await newOrder.save();
+
+    // If it's a buy order, update holdings
+    if (mode && mode.toUpperCase() === 'BUY') {
+      const existing = await HoldingsModel.findOne({ name });
+
+      if (existing) {
+        // Recalculate average price
+        const existingQty = Number(existing.qty) || 0;
+        const buyQty = Number(qty) || 0;
+        const existingAvg = Number(existing.avg) || 0;
+        const newQty = existingQty + buyQty;
+        const newAvg = newQty > 0 ? ((existingAvg * existingQty) + (Number(price) * buyQty)) / newQty : Number(price);
+
+        existing.qty = newQty;
+        existing.avg = Number(newAvg.toFixed(2));
+        existing.price = Number(price);
+
+        await existing.save();
+      } else {
+        // Create new holding
+        const holding = new HoldingsModel({
+          name,
+          qty: Number(qty),
+          avg: Number(price),
+          price: Number(price),
+          net: '+0.00%',
+          day: '+0.00%'
+        });
+        await holding.save();
+      }
+    }
+
+    res.json({ message: 'Order placed' });
+  } catch (error) {
+    console.error('Error creating order:', error);
+    res.status(500).json({ message: 'Failed to create order' });
+  }
+});
+
+// Return all holdings
+app.get('/allHoldings', async (req, res) => {
+  try {
+    const holdings = await HoldingsModel.find();
+    res.json(holdings);
+  } catch (error) {
+    console.error('Error fetching holdings:', error);
+    res.status(500).json({ message: 'Failed to fetch holdings' });
+  }
+});
 
 mongoose
   .connect(uri)

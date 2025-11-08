@@ -1,4 +1,3 @@
-const { name } = require('ejs');
 const {Schema} = require('mongoose');
 
 const OrderSchema = new Schema({

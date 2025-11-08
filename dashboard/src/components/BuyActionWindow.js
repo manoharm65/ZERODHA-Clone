@@ -11,15 +11,32 @@ const BuyActionWindow = ({ uid }) => {
   const [stockQuantity, setStockQuantity] = useState(1);
   const [stockPrice, setStockPrice] = useState(0.0);
 
-  const handleBuyClick = () => {
-    axios.post("http://localhost:3002/newOrder", {
-      name: uid,
-      qty: stockQuantity,
-      price: stockPrice,
-      mode: "BUY",
-    });
+  const handleBuyClick = async () => {
+    try {
+      const resp = await axios.post("http://localhost:3002/newOrder", {
+        name: uid,
+        qty: stockQuantity,
+        price: stockPrice,
+        mode: "BUY",
+      });
 
-    GeneralContext.closeBuyWindow();
+      // Optionally you can inspect resp.data here
+      // console.log('Order response:', resp.data);
+
+      GeneralContext.closeBuyWindow();
+    } catch (error) {
+      console.error('Buy order error:', error);
+      // Show a clearer message to the user
+      if (error.response) {
+        // Server responded with a status outside 2xx
+        alert('Order failed: ' + (error.response.data.message || error.response.statusText));
+      } else if (error.request) {
+        // Request made but no response
+        alert('Network error: Could not reach backend. Is the backend server running?');
+      } else {
+        alert('Error: ' + error.message);
+      }
+    }
   };
 
   const handleCancelClick = () => {
